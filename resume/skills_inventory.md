@@ -16,7 +16,7 @@ what base_resume.md says about each job/project. Format: one "- **Category:** a,
 - **LLM Frameworks & APIs:** LangChain, LangGraph, Azure OpenAI, OpenAI API, Google Gemini API, LiteLLM, OpenRouter, Ollama, Llama 3, AI Agents, Tool Calling, Claude Code
 - **ML Libraries:** Scikit-learn, TensorFlow, PyTorch, Pandas, NumPy, Matplotlib, Seaborn, Jupyter
 - **Data:** Apify, ETL Pipelines, Data Cleaning, Data Preprocessing, Data Transformation, Data Quality, Web Scraping, Document Ingestion
-- **Databases & Vector Stores:** Vector Databases, Azure AI Search, PostgreSQL, pgvector, MongoDB, Redis, Prisma
+- **Databases & Vector Stores:** Vector Databases, Azure AI Search, PostgreSQL (Postgres), pgvector, MongoDB, Redis, Prisma
 - **Backend & Apps:** FastAPI, REST APIs, Streamlit, React, Node.js, JWT Authentication
 - **Cloud & MLOps:** Modal, Google Workspace APIs, Azure, Azure Document Intelligence, Azure Blob Storage, AWS, AWS S3, AWS EC2, Docker, Docker Compose, CI/CD, MLflow, Experiment Tracking, pytest, Git, GitHub
 
