@@ -31,6 +31,12 @@ Generative AI Engineer with hands-on experience building LLM-powered application
 
 ## Projects
 
+### AI Job Application Agent — Autonomous Job Search & Resume Tailoring
+- Built a daily AI agent in Python that scrapes jobs via Apify, filters them and scores fit with LLMs
+- Tailored ATS-friendly resumes via LLMs, guarded by fabrication checks and Claude Code hooks
+- Automated PDF resumes and job tracking in Google Docs, Drive and Sheets via Google Workspace CLI
+- Deployed on Modal as a scheduled cloud job with secrets management, persistent storage and alerts
+
 ### LUDO Bot — Enterprise GenAI Assistant
 - Developed an AI-powered conversational assistant using Azure OpenAI GPT models and Python
 - Built Retrieval-Augmented Generation (RAG) pipelines integrating Azure AI Search and vector databases

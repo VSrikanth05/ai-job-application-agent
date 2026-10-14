@@ -10,3 +10,5 @@ resume/base_resume.md
 tools/gws/
 # gws upload/download staging
 .gws_io/
+# stray empty file a browser/login flow keeps creating
+download.html

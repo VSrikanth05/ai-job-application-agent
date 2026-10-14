@@ -106,7 +106,7 @@ def build_docx(md: str, path: Path) -> None:
     doc = Document()
     for s in doc.sections:
         s.page_height, s.page_width = Pt(842), Pt(595)  # A4
-        s.top_margin = s.bottom_margin = Pt(36)
+        s.top_margin = s.bottom_margin = Pt(28)
         s.left_margin = s.right_margin = Pt(46)
     normal = doc.styles["Normal"]
     normal.font.name, normal.font.size = "Calibri", Pt(10.5)
@@ -140,13 +140,13 @@ def build_docx(md: str, path: Path) -> None:
             if pos < len(text):
                 p.add_run(text[pos:]).font.size = Pt(10)
         elif kind == "h2":
-            _bottom_border(add(text.upper(), size=11.5, bold=True, color=ACCENT, before=8, after=3))
+            _bottom_border(add(text.upper(), size=11.5, bold=True, color=ACCENT, before=6, after=2))
         elif kind == "h3":
-            add(text, bold=True, before=4, after=0)
+            add(text, bold=True, before=3, after=0)
         elif kind == "meta":
             add(text, italic=True, size=9.5, color="555555", after=1)
         elif kind == "bullet":
-            add(text, style="List Bullet", after=1)
+            add(text, style="List Bullet", after=0)
         else:
             add(text)
     doc.save(path)
