@@ -1,0 +1,12 @@
+.env
+.venv/
+output/
+secrets/
+__pycache__/
+*.pyc
+# Real resume has phone + email; commit resume/base_resume.example.md instead.
+resume/base_resume.md
+# gws binary (download per GWS_SETUP.md)
+tools/gws/
+# gws upload/download staging
+.gws_io/

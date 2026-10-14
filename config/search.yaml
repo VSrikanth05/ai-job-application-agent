@@ -1,0 +1,119 @@
+# Pipeline config — edit here, not in code.
+
+# Search queries (PRD 3.1). LinkedIn public mode: one search per role x location
+# (cookies mode OR-s them into one search per location; Naukri comma-joins them).
+roles:
+  - Generative AI Engineer
+  - AI Engineer
+  - Machine Learning Engineer
+  - LLM Engineer
+  - Agentic AI Engineer
+  - Python Developer AI
+  - Junior Data Analyst
+  - Data Annotation Specialist
+  - AI Data Specialist
+
+# Free remote boards return every category; a job is kept only if its title
+# matches one of these (case-insensitive regex).
+title_keywords:
+  - '\bai\b'
+  - '\bml\b'
+  - 'machine learning'
+  - '\bllm'
+  - 'gen ?ai'
+  - 'generative'
+  - '\bnlp\b'
+  - 'agentic'
+  - 'prompt engineer'
+  - 'data analyst'
+  - 'annotat'
+  - 'data specialist'
+  - 'python'
+
+min_fit_score: 7
+allowed_currencies: [USD, EUR]
+allow_unknown_currency: true      # most postings don't state pay
+
+hard_filters:
+  max_years_required: 2           # reject if the posting requires 3+ years
+  senior_title_words: [senior, sr, lead, staff, principal, manager, head, director, architect, vp, chief]
+
+# OpenRouter free models allow ~50 requests/day, so LLM work is capped per run:
+# up to max_jobs_to_score scoring calls, then 2 calls (tailor + research) per qualified job.
+llm:
+  max_jobs_to_score: 25
+  max_qualified_per_run: 6
+  description_chars: 6000
+
+# Desktop/<desktop_folder>/<scrape date>/<Company - Job Title>/<resume_filename>.pdf  (PDF only)
+output:
+  desktop_folder: Job Applications
+  resume_filename: Srikanth Valluri Resume
+  max_pages: 1                          # longer after one shorten-retry → job is flagged, not saved
+
+# Tailoring emphasis per role category (PRD 3.4).
+role_emphasis:
+  AI/GenAI: Lead with RAG systems, Azure OpenAI apps, LangChain/LangGraph and the LUDO Bot project.
+  ML: Lead with predictive models, Scikit-learn/PyTorch/TensorFlow and the internship work.
+  Data Analyst: Lead with SQL, Pandas/NumPy, ETL pipelines and the Restaurant AI Assistant (sales data).
+  Data Annotation: Lead with data quality, preprocessing/cleaning, NLP and LLM familiarity.
+  Python Developer: Lead with Python application development, Docker, CI/CD and the LLM apps built.
+
+# Apify free plan = $5/month (~$0.16/day). Paid sources run in YAML order and
+# stop/shrink so today's estimated worst-case spend stays under this.
+daily_budget_usd: 0.16
+
+# Prices are the Apify FREE-plan tier (higher than paid tiers).
+sources:
+  # mode "public": logged-out LinkedIn search (no cookies, no account risk) — the default.
+  # mode "cookies": the logged-in actor; needs secrets/linkedin_cookies.json + LINKEDIN_USER_AGENT
+  # (README "LinkedIn cookies") and these instead: actor curious_coder/linkedin-jobs-search-scraper,
+  # price_start_usd 0.005 (per location run), price_item_usd 0.0015, count_per_search.
+  linkedin:
+    enabled: true
+    kind: apify
+    mode: public
+    actor: curious_coder/linkedin-jobs-scraper
+    price_start_usd: 0.0001       # one run for all searches
+    price_item_usd: 0.002
+    limit_per_search: 4           # 9 roles x 2 locations x 4 = 72 jobs max ≈ $0.144/day (budget $0.16)
+    date_posted: past24Hours
+    count_per_search: 15          # cookies mode only (one OR-ed search per location)
+    locations:
+      - {name: India, geo_id: "102713980"}
+      - {name: Worldwide, geo_id: "92000000"}
+    # LinkedIn search URL filters: remote, full-time, entry/associate, past 24h.
+    url_filters: {f_WT: "2", f_JT: "F", f_E: "2,3", f_TPR: r86400}
+
+  # Off: almost all Naukri jobs pay INR and the user wants USD/EUR only.
+  naukri:
+    enabled: false
+    kind: apify
+    actor: muhammetakkurtt/naukri-job-scraper
+    price_start_usd: 0.001
+    price_item_usd: 0.003         # detailed job data (fetch_details)
+    max_jobs: 50                  # actor minimum
+    max_charge_usd: 0.10          # actor minimum charge cap
+    fetch_details: true
+    freshness: "1"
+    experience: "1"
+    work_mode: ["remote"]
+    sort_by: date
+
+  # Free boards (no Apify credit). RemoteOK and Remotive are low-volume (Remotive's public API returns a fixed ~16 jobs); seen-jobs dedupe stops reprocessing.
+  remoteok:
+    enabled: true
+    kind: free
+    max_age_days: 7
+  remotive:
+    enabled: true
+    kind: free
+    max_age_days: 7
+  weworkremotely:
+    enabled: true
+    kind: free
+    max_age_days: 7
+    feeds:
+      - https://weworkremotely.com/categories/remote-programming-jobs.rss
+      - https://weworkremotely.com/categories/remote-back-end-programming-jobs.rss
+      - https://weworkremotely.com/categories/remote-full-stack-programming-jobs.rss

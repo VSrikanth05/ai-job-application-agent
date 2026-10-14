@@ -1,0 +1,156 @@
+# Tools/technologies the fabrication check looks for (one per line, case-insensitive).
+# Any term that appears in a tailored resume but NOT in the base resume fails validation.
+# Avoid ambiguous plain words (e.g. "Go", "R", "Excel") — they'd cause false positives.
+Python
+SQL
+Java
+JavaScript
+TypeScript
+C++
+C#
+Golang
+Rust
+Scala
+Kotlin
+Bash
+PySpark
+Spark
+Hadoop
+Kafka
+Airflow
+dbt
+Snowflake
+Databricks
+BigQuery
+Redshift
+PostgreSQL
+Postgres
+MySQL
+MongoDB
+Redis
+Elasticsearch
+Cassandra
+DynamoDB
+Pinecone
+FAISS
+Chroma
+ChromaDB
+Weaviate
+Milvus
+Qdrant
+pgvector
+Azure
+Azure OpenAI
+Azure AI Search
+Azure Document Intelligence
+Azure Machine Learning
+Blob Storage
+AWS
+S3
+EC2
+Lambda
+SageMaker
+Bedrock
+GCP
+Google Cloud
+Vertex AI
+Gemini
+OpenAI
+GPT
+ChatGPT
+Claude
+Llama
+Mistral
+Hugging Face
+HuggingFace
+Transformers
+BERT
+LangChain
+LangGraph
+LlamaIndex
+CrewAI
+AutoGen
+DSPy
+Semantic Kernel
+vLLM
+Ollama
+PyTorch
+TensorFlow
+Keras
+JAX
+Scikit-learn
+XGBoost
+LightGBM
+CatBoost
+Pandas
+NumPy
+SciPy
+Polars
+Matplotlib
+Seaborn
+Plotly
+OpenCV
+spaCy
+NLTK
+MLflow
+Weights & Biases
+Kubeflow
+Docker
+Kubernetes
+Terraform
+Jenkins
+GitHub Actions
+CI/CD
+FastAPI
+Flask
+Django
+Streamlit
+Gradio
+React
+Node.js
+Next.js
+GraphQL
+REST
+Tableau
+Power BI
+Looker
+Microsoft Excel
+MS Excel
+Google Sheets
+Linux
+Git
+Jira
+Label Studio
+Labelbox
+Scale AI
+CVAT
+Prodigy
+
+# Capability / domain claims — models tend to borrow these from the job ad.
+ranking
+recommendation
+recommender
+recommendation systems
+computer vision
+image classification
+object detection
+speech recognition
+time series
+forecasting
+reinforcement learning
+fine-tuning
+fine-tuned
+MLOps
+model monitoring
+A/B testing
+feature store
+real-time inference
+low-latency
+distributed training
+multi-GPU
+big data
+data warehouse
+dashboards
+mentored
+led a team
+team lead

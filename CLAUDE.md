@@ -1,0 +1,64 @@
+# CLAUDE.md
+
+This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+
+## What this is
+
+A daily job-application agent for one candidate (Srikanth Valluri: ~1 yr GenAI experience, India-based, wants remote full-time AI/ML/Data roles **paid in USD/EUR**). It scrapes postings, filters, scores, tailors the resume per job, renders it to PDF through a Google Docs template with the Google Workspace CLI (`gws`), uploads it to Drive, logs to a Google Sheet, and runs daily at **07:00 IST on Modal** (cloud); a small local task copies new PDFs to the Desktop at logon/08:00. It never submits applications. `PRD.md` is the original spec; where this file differs, this file reflects later decisions by the user.
+
+**Hard constraint: everything must be free** — Apify free plan, OpenRouter `:free` models, Google Workspace CLI, Modal free credits. Never introduce a paid service, plan, or model.
+
+## Commands
+
+```
+python -m venv .venv && .venv/Scripts/pip install -r requirements.txt
+.venv/Scripts/python scripts/run_pipeline.py                         # full run (spends Apify credit + LLM calls)
+.venv/Scripts/python scripts/run_pipeline.py --raw output/runs/<date>/raw_jobs.json --ignore-seen   # rerun without scraping
+.venv/Scripts/python scripts/run_pipeline.py --no-tailor             # stop after scoring (Claude Code skill tailors)
+.venv/Scripts/python scripts/scrape_jobs.py --dry-run                # Apify inputs + worst-case cost; free boards still run
+.venv/Scripts/python scripts/validate_resume.py <resume.md>          # fabrication/format check
+.venv/Scripts/python scripts/finalize_job.py <job folder>            # validate → PDF → Desktop → Sheet for one job
+.venv/Scripts/python scripts/render_gdoc.py <resume.md> <out.pdf>    # just the gws PDF render
+.venv/Scripts/python scripts/google_setup.py [--template]           # create/rebuild Docs template + Sheet (IDs → .env)
+tools/gws/gws.exe auth status                                       # Google login state
+.venv/Scripts/python scripts/apply_session.py [--open N | --applied ROW...]   # Option B: Not Applied jobs → Chrome Profile 2 (Simplify)
+```
+Every stage script also runs standalone on today's `output/runs/<date>/` files. There is no test suite; check filters with small inline cases against `filter_jobs.reject_reason`.
+
+## Architecture
+
+`scripts/run_pipeline.py` orchestrates. **Production = Modal** (`modal_app.py`): `daily_run` on `modal.Cron("0 7 * * *", timezone="Asia/Kolkata")`, image = debian + requirements + pinned gws Linux binary (SHA-256 checked) + `scripts/ config/ resume/`; secret `job-apply-agent` (written by `scripts/push_modal_secrets.py` from `.env` + `gws auth export`, incl. `GWS_CREDENTIALS_JSON` which `gws.py` turns into a credentials file); Volume `job-apply-agent-data` mounted at `/root/app/output` holds `state/seen_jobs.json` and runs. `JOB_AGENT_DELIVERY=cloud` there → no Desktop copy, Drive upload failure flags the job. Locally, task `JobApplyAgent` (`scripts/install_schedule.ps1`) runs `daily_run.ps1` → `sync_desktop.py` at logon + 08:00: Sheet rows with a Drive link but blank "Desktop PDF" are downloaded to the Desktop and the path written back. Alerts are **desktop only** (user's choice — no phone): the cloud run writes `state/last_run.json` to the volume; `sync_desktop.py` fetches it (`modal volume get`) and shows a Windows toast if today's run failed or a recorded run is stale, plus a warning a day before the 7-day Google login expiry (`output/state/google_login.json`, written by `push_modal_secrets.py`) and an alert once it has expired. ntfy/Telegram code exists but is off (no `NTFY_TOPIC`/Telegram keys). Scripts import each other as top-level modules (run them as `python scripts/x.py`). Per-run artifacts go to `output/runs/<date>/` (`raw_jobs.json`, `filtered.json`, `scored.json`, `summary.json`, `jobs/<company>-<title>/`); cross-run state is `output/state/seen_jobs.json`. `JOB_AGENT_DATA_DIR` relocates `output/`. `run()` preflights gws auth, the template ID and the Sheet before any Apify/LLM spend.
+
+1. **Scrape** (`scrape_jobs.py`) — LinkedIn via Apify in `mode: public` (the user's choice: logged-out actor `curious_coder/linkedin-jobs-scraper`, one run with one search URL per role × location, no cookies) + free RemoteOK API / Remotive API / We Work Remotely RSS (title-keyword filtered). Still wired up but off: `mode: cookies` (`curious_coder/linkedin-jobs-search-scraper`, needs `secrets/linkedin_cookies.json` + `LINKEDIN_USER_AGENT`) and Naukri (`enabled: false` — INR jobs; user wants USD/EUR). A failing source is logged and reported, not fatal unless all fail. Cookies/user agent are never logged (`SECRET_INPUT_KEYS`).
+2. **Hard filters** (`filter_jobs.py`) — regex rules, no LLM: not_remote, not_full_time, too_senior (title words, LinkedIn seniority, "N+ years experience"), location_locked, pay_inr; plus dedupe against `seen_jobs.json` and links already in the Sheet. Jobs rejected or scored are marked seen so they're never re-processed (`--ignore-seen` to bypass).
+3. **Score** (`score_jobs.py`) — keyword pre-rank picks the top `llm.max_jobs_to_score`, then one LLM call each. Caps (seniority mismatch / india_eligible=no → ≤5) and the currency rule are applied in code, not trusted to the model.
+4. **Tailor** (`tailor_job.py`) — the model returns a JSON *plan* (summary, skill order, reworded bullets, project order); `assemble()` builds the markdown, copying name/contact/employers/dates/education verbatim and dropping skills not in `allowed_skills()`. One retry with validator feedback, then the job is flagged.
+5. **Validate** (`validate_resume.py`, stdlib only) — required sections, contact unchanged, placeholders, skills ⊆ base resume text ∪ `resume/skills_inventory.md` (inventory skills are allowed **only in the Skills section**; summary/bullets may only name tools the base resume mentions), `config/tech_terms.txt` terms ⊆ base (tools *and* capability claims like "ranking"/"MLOps" — the model borrows these from job ads; extend that list when a new kind of fabrication slips through), no new numbers, no new employers/projects/dates/education. Shared by the pipeline and the Claude Code hook.
+6. **Finalize** (`finalize_job.py`) — PDF via `render_gdoc.py`: `gws drive files copy` the template Doc → `gws docs documents batchUpdate` replaceAllText on `{{SLOTS}}` (`resume_template.py` maps resume → slots) → `gws drive files export` PDF → delete the copy. Page count > `output.max_pages` raises `TooLong` (pipeline re-tailors once with `shorten=True`, then flags). Then company research → copy to `Desktop/Job Applications/<scrape date>/<Company - Title>/Srikanth Valluri Resume.pdf` (PDF only) and the same path under the Drive folder `GOOGLE_DRIVE_FOLDER_ID` (`gdrive.py`; a failed upload only warns) → Sheet row via `write_sheet.py` (gws values append, RAW, `OVERWRITE` into pre-formatted rows, deduped by link). Sheet columns/Status values live in `write_sheet.COLUMNS`/`STATUSES`; `google_setup.format_sheet` applies the dropdown, colours and widths (re-runnable). The agent only appends; Status/Applied On/Notes are the user's.
+7. **Notify** (`notify.py`) — local runs: Windows toast via PowerShell (click opens today's Desktop folder, or the log on failure); cloud runs: outcome → `state/last_run.json` → toast via `sync_desktop.py`. On any exception `JOB-APPLY-AGENT — WHAT BROKE` then re-raise. Everything is logged too.
+
+Interactive path: `.claude/skills/tailor-resume/SKILL.md` has Claude write `resume.md` into a prepared job folder; `.claude/hooks/resume_hook.py` (PreToolUse Write / PostToolUse Edit, via `.claude/settings.json`) blocks invalid resumes; then `finalize_job.py` does the rest.
+
+**Skills inventory + ATS:** `resume/skills_inventory.md` lists every skill the candidate can evidence (base resume + public GitHub, with an evidence comment per skill) — the only way to add a skill. `ats.py` finds the JD's keywords (inventory ∪ base skills ∪ `tech_terms.txt`; "Long Form (ACR)" items match either form), feeds `have`/`missing` into the tailoring prompt, and scores keyword coverage into the Sheet's **ATS Match** column. JD keywords the candidate lacks are never added.
+
+## Gotchas
+
+- **Modal**: deploy `.venv/Scripts/modal deploy modal_app.py`; checks without spend: `modal run modal_app.py --connectivity` (job boards + Apify dry-run inputs + one OpenRouter call), `--smoke` (cloud Google path, adds a TEST Sheet row + Drive TEST folder — delete after) and `--force-fail` (writes a failed `state/last_run.json` → the next `sync_desktop.py` shows the alert; delete it after with `modal volume rm job-apply-agent-data state/last_run.json`). Run modal CLI from PowerShell with `PYTHONIOENCODING=utf-8` (Git Bash mangles `/paths` and the console codec breaks its output). After re-logging into Google: `scripts/push_modal_secrets.py` (records the login time); after only changing `.env`: add `--keep-login-date`. Code/config/resume changes need a redeploy.
+- gws follows symlinks when enforcing its "inside working dir" rule (the Modal volume is a symlink), so `gws.py` stages every `--upload/--output` through `ROOT/.gws_io` — callers may pass any path.
+
+- **Apify spends real credit** (free plan $5/month; config prices are the FREE tier: public LinkedIn $0.0001/run + $0.002/job). `daily_budget_usd` is enforced in `scrape_jobs.run_apify`. Don't run live scrapes repeatedly while debugging — reuse `--raw` / `output/runs/<date>/apify/*.json`.
+- **OpenRouter free tier ≈ 50 requests/day** for this account. `DailyLimitReached` stops tailoring cleanly. Nemotron models reason before answering: `llm.py` adds `REASONING_HEADROOM` tokens — without it they return empty/truncated JSON, and disabling reasoning inflates scores.
+- Model list is `OPENROUTER_MODEL` (comma-separated fallbacks) in `.env`. Scoring puts `OPENROUTER_SCORING_MODEL` (default `nvidia/nemotron-3-ultra-550b-a55b:free`, the user's choice) in front of that list via `chat_json(model_env=...)`; per-task defaults live in `llm.TASK_MODELS`.
+- All Google access goes through the pinned `gws` binary (`tools/gws/gws.exe`, v0.22.5, pre-1.0 — check behaviour before upgrading) via `scripts/gws.py`; gws exit codes map to `GwsError.kind` (auth/setup errors abort the run, API errors flag the job). Setup: `GWS_SETUP.md`.
+- **Template slots are fixed by the base resume's structure** (skill-line count, bullets per entry). `tailor_job.assemble()` falls back to base skills/order when the model's plan wouldn't fit; after changing `resume/base_resume.md` rebuild with `google_setup.py --template`. The user may restyle the template Doc freely but must keep every `{{...}}`.
+- gws only reads `--upload` / writes `--output` paths inside its working directory: `gws.py` runs it with `cwd=ROOT`, so keep those files under `output/` (Desktop copies are done in Python).
+- Auth: OAuth app in the user's own GCP project (ID kept out of the repo), **Testing** mode (login expires every 7 days — accepted by the user; desktop warning the day before, alert after; re-login = `gws auth login --scopes …drive.file` + `push_modal_secrets.py`, steps in `GWS_SETUP.md`). Scope is `drive.file` only — enough because every file gws touches was created by the app. After a re-login, a stale `~/.config/gws/token_cache.json` can cause "insufficient authentication scopes"; delete it.
+- Desktop is resolved via the Windows shell API (this machine's Desktop is under OneDrive).
+- Don't write Python containing regex `\b` through bash heredocs — it has produced literal backspace characters before; use the Write/Edit tools.
+
+## Non-negotiable rules
+
+- **No fabrication in tailored resumes.** Reorder and reword only — never add experience, employers, tools, metrics, or years. Missing requirements are logged in the Sheet, not added.
+- Skills/fabrication checks compare against the *whole* base resume (e.g. "Azure OpenAI" only appears in Experience).
+- No silent failures in the scheduled run.
+- Privacy: `resume/base_resume.md` (real phone/email), `.env`, `secrets/`, `output/`, `tools/gws/` are gitignored; `resume/base_resume.example.md` is the redacted copy.
