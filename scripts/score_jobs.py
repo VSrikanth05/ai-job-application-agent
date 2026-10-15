@@ -14,9 +14,10 @@ import argparse
 import logging
 import re
 import sys
+from datetime import date
 from pathlib import Path
 
-from common import base_resume_text, load_config, read_json, run_dir, setup_logging, write_json
+from common import base_resume_text, load_config, read_json, run_dir, setup_logging, today, write_json
 from llm import DailyLimitReached, LLMError, chat_json
 from resume_model import parse
 
@@ -66,9 +67,38 @@ def apply_rules(result: dict, cfg: dict) -> dict:
     return result
 
 
+MONTHS = {m: i for i, m in enumerate(
+    ["jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec"], 1)}
+DATE_RANGE = re.compile(r"([A-Za-z]{3})[a-z]*\.? (\d{4})\s*[–-]\s*(Present|Current|Now|([A-Za-z]{3})[a-z]*\.? (\d{4}))", re.I)
+
+
+def experience_note(base_md: str, today: date) -> str:
+    """The model has no reliable sense of today's date, so "Sep 2025 – Present" was read as ~3 months.
+    Spell out today's date and each role's length, computed from the resume's own date ranges."""
+    lines = []
+    for e in parse(base_md).entries("Experience"):
+        m = DATE_RANGE.search(e.meta or "")
+        if not m or m.group(1).lower()[:3] not in MONTHS:
+            continue
+        start = (int(m.group(2)), MONTHS[m.group(1).lower()[:3]])
+        if m.group(4):  # closed range counts both end months: Mar–Jun = 4
+            if m.group(4).lower()[:3] not in MONTHS:
+                continue
+            end, inclusive = (int(m.group(5)), MONTHS[m.group(4).lower()[:3]]), 1
+        else:           # ongoing: whole months elapsed so far
+            end, inclusive = (today.year, today.month), 0
+        months = (end[0] - start[0]) * 12 + end[1] - start[1] + inclusive
+        lines.append(f"- {e.heading}: {months} months")
+    if not lines:
+        return f"TODAY'S DATE: {today.isoformat()} (use it for \"Present\" in date ranges)"
+    return (f"TODAY'S DATE: {today.isoformat()} (use it for \"Present\" in date ranges). "
+            "Candidate's experience computed from the resume dates:\n" + "\n".join(lines))
+
+
 def score_job(job: dict, base_md: str, cfg: dict) -> dict:
     desc = job["description"][: cfg["llm"]["description_chars"]]
-    user = (f"CANDIDATE RESUME:\n{base_md}\n\nJOB:\nTitle: {job['title']}\nCompany: {job['company']}\n"
+    note = experience_note(base_md, date.fromisoformat(today()))
+    user = (f"{note}\n\nCANDIDATE RESUME:\n{base_md}\n\nJOB:\nTitle: {job['title']}\nCompany: {job['company']}\n"
             f"Location: {job['location']}\nEmployment type: {job['employment_type'] or 'not stated'}\n"
             f"Salary: {job['salary'] or 'not stated'}\n\nDescription:\n{desc}")
     raw = chat_json(SYSTEM, user, max_tokens=1500, model_env="OPENROUTER_SCORING_MODEL")
