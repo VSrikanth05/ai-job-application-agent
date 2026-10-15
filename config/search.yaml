@@ -31,8 +31,16 @@ title_keywords:
   - 'python'
 
 min_fit_score: 7
-allowed_currencies: [USD, EUR]
-allow_unknown_currency: true      # most postings don't state pay
+
+# Pay rules (user's choice — strict): only these currencies, and when an amount is stated it must be at
+# least min_annual_usd a year (range midpoint). Unstated pay passes only when the scorer judges the job is
+# NOT on an Indian payroll (employer outside India) — India-based employers pay INR.
+pay:
+  currencies: [USD, EUR, GBP, CHF, CAD, AUD, SGD, NZD]
+  min_annual_usd: 30000
+  unknown_pay: employer_abroad_only     # employer_abroad_only | keep | drop
+  # Approximate conversion rates (USD per 1 unit), only used for the min_annual_usd check.
+  usd_per_unit: {USD: 1.0, EUR: 1.08, GBP: 1.27, CHF: 1.12, CAD: 0.73, AUD: 0.65, SGD: 0.74, NZD: 0.60, INR: 0.012}
 
 hard_filters:
   max_years_required: 2           # reject if the posting requires 3+ years
@@ -117,3 +125,35 @@ sources:
       - https://weworkremotely.com/categories/remote-programming-jobs.rss
       - https://weworkremotely.com/categories/remote-back-end-programming-jobs.rss
       - https://weworkremotely.com/categories/remote-full-stack-programming-jobs.rss
+      - https://weworkremotely.com/categories/all-other-remote-jobs.rss   # data / AI-trainer roles
+
+  # Remote-only board, free JSON API. country=IN returns India-restricted + worldwide jobs; one call per
+  # query (20 results). Credit/link back to himalayas.app is required by its API terms (jobs keep their link).
+  himalayas:
+    enabled: true
+    kind: free
+    max_age_days: 3
+    queries: [AI engineer, machine learning, LLM, generative AI, AI agent, data analyst, python developer, data annotation]
+    skip_seniority: [Senior, Manager, Director, Executive]   # dropped unless Entry-level/Mid-level is also listed
+
+  # ROLIVA "Remote jobs open to applicants in India" (CC-BY-4.0 data file, Ashby/Greenhouse/Lever roles).
+  # Each candidate is looked up on the company's own ATS API: closed jobs are dropped, descriptions/pay
+  # filled in, and only ATS-confirmed remote roles are kept.
+  roliva:
+    enabled: true
+    kind: free
+    max_age_days: 14                  # by the employer's posting date; each job is re-confirmed open on its ATS
+    url: https://raw.githubusercontent.com/raghavendra81422-boop/remote-jobs-open-to-india/main/data.json
+
+  # Python Software Foundation job board RSS (location is the first line of each description).
+  pythonorg:
+    enabled: true
+    kind: free
+    feed: https://www.python.org/jobs/feed/rss/
+
+  # Hacker News "Ask HN: Who is hiring?" monthly thread (free Algolia API). Only posts whose first line says
+  # remote AND worldwide / anywhere / global / India / APAC are kept.
+  hn_whoishiring:
+    enabled: true
+    kind: free
+    max_age_days: 35

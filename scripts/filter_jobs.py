@@ -16,17 +16,16 @@ from collections import Counter
 from datetime import date, timedelta
 from pathlib import Path
 
-from common import STATE_DIR, job_keys, load_config, read_json, run_dir, setup_logging, today, write_json
+from common import STATE_DIR, job_keys, legacy_pair_key, load_config, read_json, run_dir, setup_logging, today, write_json
+from pay import parse_salary, pay_problem
 
 log = logging.getLogger("filter")
 
 SEEN_PATH = STATE_DIR / "seen_jobs.json"
 SEEN_TTL_DAYS = 60
 
-# In a location field, broad words are fine; in a description they must clearly be about where you can work
-# from ("global"/"international" appear in almost every company blurb).
-INDIA_OK = re.compile(r"\b(india|indian|apac|asia|asia[- ]pacific|worldwide|anywhere|global(?:ly)?|"
-                      r"international|any (?:country|location)|work from anywhere)\b", re.I)
+# In a description, words must clearly be about where you can work from ("global"/"international" appear
+# in almost every company blurb). Location fields use INDIA_PLACE / WORLD below.
 INDIA_OK_DESC = re.compile(r"\b(india|apac|asia[- ]pacific|remote[- ]worldwide|worldwide remote|anywhere in the world|"
                            r"work from anywhere|from anywhere|globally remote|remote globally|fully distributed|"
                            r"any (?:country|time ?zone|location))\b", re.I)
@@ -43,10 +42,43 @@ FOREIGN_LOC = re.compile(r"\b(united states|usa|u\.s\.|\bus\b|canada|united king
                          r"americas|north america|latam|latin america|emea|germany|france|spain|netherlands|poland|"
                          r"australia|brazil|mexico|israel|ireland|portugal|sweden|singapore|japan)\b", re.I)
 US_STATE_LOC = re.compile(r",\s*[A-Z]{2}\b")  # "Atlanta, GA" / "Provo, UT" (LinkedIn US locations)
+# Strict remote (user's rule): remote-only boards, or "remote" in the structured title/location.
+REMOTE_ONLY_BOARDS = {"remoteok", "remotive", "weworkremotely", "himalayas"}
+# Work-arrangement "hybrid" only — AI postings say "hybrid search/retrieval/cloud/models" and "a hybrid
+# role combining research and engineering" (duties) all the time; "this role is hybrid" is an arrangement.
+HYBRID_DESC = re.compile(r"\b(?:work(?:place|ing)?|work ?(?:mode|model|type|setup|arrangement)|location type|job type|"
+                         r"arrangement|(?:this|the) (?:role|position|job))\s*(?:type|mode)?\s*(?:[:\-–]|is)?\s*hybrid\b|"
+                         r"\bhybrid (?:work|working|schedule|arrangement|setup|office|policy|model of work)\b|"
+                         r"\bhybrid\s*\(\s*\d|"
+                         r"\b\d\s*(?:days?|x)\s*(?:a|per|/|each)\s*week\b[^.\n]{0,40}\b(?:office|on-?site)\b|"
+                         r"\b\d\s*days?\s+(?:in|at|from)\s+(?:the |our )?(?:[A-Z][a-z]+ )?office\b|"
+                         r"\b(?:on-?site|in[- ]office) (?:presence|attendance|work) (?:is )?(?:required|expected|mandatory)\b|"
+                         r"\bmust (?:be able to )?(?:commute|come in(?:to)? (?:the|our) office|work from (?:the|our) office)\b", re.I)
+# Only role-level statements override the above ("remote-first company" doesn't make a hybrid role remote).
+FULLY_REMOTE = re.compile(r"\bfully[- ]remote\b|\b100\s?% remote\b|\bremote[- ]only\b|\bfully distributed\b|"
+                          r"\bwork from anywhere\b", re.I)
+# A place named in a location string that is India (cities/states without the word "India" included) or APAC.
+INDIA_PLACE = re.compile(
+    r"\b(india|indian|bharat|apac|asia|asia[- ]pacific|south asia|bangalore|bengaluru|hyderabad|secunderabad|"
+    r"mumbai|navi mumbai|thane|pune|chennai|delhi|new delhi|ncr|gurgaon|gurugram|noida|ghaziabad|faridabad|"
+    r"kolkata|ahmedabad|gandhinagar|kochi|cochin|trivandrum|thiruvananthapuram|jaipur|chandigarh|mohali|indore|"
+    r"bhopal|coimbatore|madurai|nagpur|nashik|visakhapatnam|vizag|vijayawada|bhubaneswar|lucknow|kanpur|mysore|"
+    r"mysuru|mangalore|mangaluru|surat|vadodara|patna|guwahati|dehradun|goa|telangana|karnataka|maharashtra|"
+    r"tamil nadu|kerala|gujarat|andhra pradesh|west bengal|haryana|uttar pradesh|rajasthan|odisha|punjab|"
+    r"madhya pradesh|bihar|assam|uttarakhand)\b", re.I)
+WORLD = re.compile(r"\b(anywhere in the world|worldwide|world ?wide|work from anywhere|global(?:ly)?|international|"
+                   r"any (?:country|location)|world)\b", re.I)
+# Words that say nothing about WHERE (stripped before the location allowlist check).
+LOC_NOISE = re.compile(r"\b(remote|remotely|work from home|wfh|telecommute|telework|unspecified|not specified|"
+                       r"full[- ]?time|permanent|contract|anywhere|location|locations|and|or|the|in|of|"
+                       r"only|open to|candidates|based|named|by|employer)\b|[()\[\],;:/|&+\-–—.!🌍🌎🌏]", re.I)
 NOT_FULL_TIME = re.compile(r"\bpart[- ]?time\b|\bcontract(?:or|ual)?\b|\bfreelance|\btemporary\b|\btemp\b|"
                            r"\bintern(?:ship)?\b|\bvolunteer|\bper[- ]task\b|\bgig\b|\bhourly\b", re.I)
 HOURLY_PAY = re.compile(r"[$€£]\s?\d+(?:\.\d+)?\s*(?:/|per)\s*(?:hr|hour|task)\b", re.I)
 ONSITE = re.compile(r"\bon[- ]?site\b|\bin[- ]office\b|\bwork from office\b|\bhybrid\b", re.I)
+# Remote offered as an alternative ("Remote (Worldwide) or On-site London") is still a remote job.
+REMOTE_OPTION = re.compile(r"\bremote\b[^|;]{0,30}\b(?:or|/|&)\s*(?:on-?site|hybrid|in[- ]office)\b|"
+                           r"\b(?:on-?site|hybrid|in[- ]office)\b[^|;]{0,30}\b(?:or|/|&)\s*remote\b", re.I)
 YEARS = re.compile(r"(\d{1,2})\s*(?:\+|plus)?\s*(?:-|–|to)?\s*(?:\d{1,2})?\s*\+?\s*(?:years?|yrs?)\b"
                    r"(?:[^.\n]{0,60}?\bexperience\b)?", re.I)
 INR = re.compile(r"₹|\binr\b|\blpa\b|\blakhs?\b|\blacs?\b|\bcrore\b", re.I)
@@ -64,23 +96,42 @@ def required_years(text: str) -> int | None:
     return max(found) if found else None
 
 
+def location_open_to_india(loc: str) -> bool:
+    """Allowlist: a location passes if it names an Indian place / APAC / Asia, or if nothing is left after
+    removing worldwide/global words and filler ("Remote", "Remote (Anywhere in the World)"). Any other
+    specific place fails: Italy, "Remote - US", "Anywhere in US", EMEA, 東京 — a fixed list of foreign
+    countries kept missing some (Italy). When remote is one of several options ("Remote (Worldwide) or
+    On-site London"), only the remote option's place counts."""
+    parts = re.split(r"\s+or\s+|\s*/\s*|;", loc)
+    remote_parts = [p for p in parts if re.search(r"\bremote\b|anywhere|worldwide|global", p, re.I)]
+    for part in remote_parts or [loc]:
+        if INDIA_PLACE.search(part):
+            return True
+        residual = LOC_NOISE.sub(" ", WORLD.sub(" ", part))
+        if not re.search(r"[^\W\d_]{2,}", residual):  # any script, so non-Latin place names count too
+            return True
+    return False
+
+
 def reject_reason(job: dict, cfg: dict) -> str | None:
     title, loc, desc = job["title"], job["location"], job["description"]
     hf = cfg["hard_filters"]
     head = f"{title} {loc}"
 
-    # not remote
-    remote_boards = {"remoteok", "remotive", "weworkremotely"}
-    is_remote = job["source"] in remote_boards or re.search(r"\bremote\b", f"{head} {desc}", re.I)
-    if not is_remote:
+    # not remote (strict): remote-only board, or "remote" in the title/location itself — a description that
+    # merely mentions "remote" somewhere is not enough. Any hybrid/on-site wording in title/location rejects,
+    # India included; hybrid/office-days in the description reject unless it also says fully remote.
+    is_remote = job["source"] in REMOTE_ONLY_BOARDS or re.search(r"\bremote\b", head, re.I)
+    if not is_remote or (ONSITE.search(head) and not REMOTE_OPTION.search(head)):
         return "not_remote"
-    if ONSITE.search(head) and not re.search(r"\bremote\b", head, re.I) and not re.search(r"\bindia\b", loc, re.I):
+    if HYBRID_DESC.search(desc) and not FULLY_REMOTE.search(f"{head} {desc}"):
         return "not_remote"
 
-    # not full-time
-    if NOT_FULL_TIME.search(job["employment_type"]) and not re.search(r"full[- ]?time", job["employment_type"], re.I):
+    # not full-time: any contract/part-time/intern marker counts, even next to "full-time" ("Full-time
+    # contractor"), and so does pay quoted per hour.
+    if NOT_FULL_TIME.search(job["employment_type"]) or NOT_FULL_TIME.search(title) or HOURLY_PAY.search(desc):
         return "not_full_time"
-    if NOT_FULL_TIME.search(title) or HOURLY_PAY.search(desc):
+    if parse_salary(job.get("salary")).period == "hour":
         return "not_full_time"
 
     # too senior
@@ -93,17 +144,23 @@ def reject_reason(job: dict, cfg: dict) -> str | None:
     if yrs is not None and yrs > hf["max_years_required"]:
         return "too_senior"
 
-    # location-locked outside India
-    india_ok = INDIA_OK.search(loc) or INDIA_OK_DESC.search(desc)
-    if LOCKED.search(desc) and not india_ok:
+    # location-locked outside India. A lock stated in the description ("must be located in the US") wins
+    # unless the description itself opens it to India/worldwide — a board's generic "Anywhere" region
+    # label doesn't override what the employer wrote.
+    if LOCKED.search(desc) and not INDIA_OK_DESC.search(desc):
         return "location_locked"
-    foreign = FOREIGN_LOC.search(loc) or US_STATE_LOC.search(loc)
-    if foreign and not INDIA_OK.search(loc) and not india_ok:
+    if not location_open_to_india(loc):
+        return "location_locked"
+    if (FOREIGN_LOC.search(loc) or US_STATE_LOC.search(loc)) and not (INDIA_PLACE.search(loc) or WORLD.search(loc)):
         return "location_locked"
 
-    # INR pay (user wants USD/EUR only)
-    if "INR" not in cfg["allowed_currencies"] and INR.search(job.get("salary", "")):
-        return "pay_inr"
+    # pay (user's rules): stated pay must be an allowed currency and >= min_annual_usd; INR anywhere in
+    # the posting (₹, LPA, lakh, crore) means an Indian payroll.
+    problem = pay_problem(job.get("salary", ""), cfg["pay"])
+    if problem:
+        return problem.split(":")[0]
+    if "INR" not in cfg["pay"]["currencies"] and INR.search(desc):
+        return "pay_currency"
     return None
 
 
@@ -132,7 +189,7 @@ def filter_jobs(jobs: list[dict], cfg: dict, extra_seen_links: set[str] | None =
     counts, kept, rejected = Counter(), [], []
     for j in jobs:
         link, pair = job_keys(j)
-        if not ignore_seen and (link in seen or pair in seen or link in seen_links):
+        if not ignore_seen and (link in seen or pair in seen or legacy_pair_key(j) in seen or link in seen_links):
             counts["already_seen"] += 1
             continue
         reason = reject_reason(j, cfg)

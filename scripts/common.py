@@ -73,10 +73,36 @@ def norm_text(s: str) -> str:
     return re.sub(r"[^a-z0-9]+", " ", (s or "").lower()).strip()
 
 
+TRACKING_PARAM = re.compile(r"^(utm_.*|ref|refid|referrer|source|src|trk|trackingid|gh_src|lever-source.*|"
+                            r"lever-origin|fbclid|gclid|mc_.*|_hsenc|_hsmi|origin)$", re.I)
+COMPANY_SUFFIX = re.compile(r"(?:\s+(?:india|inc|llc|ltd|limited|pvt|private|plc|gmbh|corp|corporation|co|"
+                            r"technologies|technology|labs|software|group|holdings|ai))+$")
+
+
+def norm_company(s: str) -> str:
+    """'AlphaSense India' / 'AlphaSense, Inc.' → 'alphasense' (same employer on different boards)."""
+    n = norm_text(s)
+    return COMPANY_SUFFIX.sub("", n) or n
+
+
+def legacy_pair_key(job: dict) -> str:
+    """company|title key as written before norm_company existed — still checked so the seen-jobs
+    history recorded earlier keeps matching."""
+    return f"{norm_text(job.get('company'))}|{norm_text(job.get('title'))}"
+
+
 def job_keys(job: dict) -> tuple[str, str]:
-    """(link key, company|title key) used for dedupe everywhere."""
-    link = (job.get("link") or "").split("?")[0].rstrip("/").lower()
-    return link, f"{norm_text(job.get('company'))}|{norm_text(job.get('title'))}"
+    """(link key, company|title key) used for dedupe everywhere. Query params are kept unless they are
+    tracking noise: some career sites identify the job only by them (…/careers/job?gh_jid=123)."""
+    from urllib.parse import parse_qsl, urlencode, urlsplit
+
+    raw = (job.get("link") or "").strip()
+    # Same format as before for links without meaningful params (keeps the seen-jobs history valid).
+    link = raw.split("?")[0].rstrip("/").lower()
+    query = urlencode(sorted({(k, v) for k, v in parse_qsl(urlsplit(raw).query) if not TRACKING_PARAM.match(k)}))
+    if query:
+        link += f"?{query}"
+    return link, f"{norm_company(job.get('company'))}|{norm_text(job.get('title'))}"
 
 
 def desktop_dir() -> Path:

@@ -7,7 +7,7 @@ and the exact run/deploy commands are all below — nothing else to figure out.
 ## What This Is
 
 An AI agent that finds **entry-level, remote, full-time AI / ML / Data jobs** that can hire from
-India and pay in USD/EUR, scores each one against my resume, tailors a **one-page resume** for every
+India and pay well in USD/EUR (or GBP/CHF/CAD/AUD/SGD/NZD, at least $30k/yr), scores each one against my resume, tailors a **one-page resume** for every
 job that's a strong fit (reorder and reword only — never invented), researches the company, and logs
 it all to a Google Sheet. It runs on its own on **Modal every morning at 7:00 AM IST**; when I log in,
 the new PDFs are already on my Desktop.
@@ -18,8 +18,8 @@ Modal's free monthly credit.
 ## Architecture
 
 ```
-Scrape (Apify LinkedIn + RemoteOK / Remotive / We Work Remotely)
-    -> Hard filters (rule-based: remote, full-time, <=2 yrs, can hire from India, not INR)
+Scrape (Apify LinkedIn + Himalayas / ROLIVA via company ATS APIs / We Work Remotely / Python.org / HN Who is hiring / RemoteOK / Remotive)
+    -> Hard filters (rule-based: truly remote, full-time, <=2 yrs, open to India, pay currency + $30k floor)
         -> Score + Filter (OpenRouter, 7+/10 cutoff, ATS keyword match)
             -> Tailor Resume (Skill + validation Hook; skills only from a proven skills inventory)
                 -> Render PDF (Google Docs template via gws CLI, one page)
@@ -28,7 +28,7 @@ Scrape (Apify LinkedIn + RemoteOK / Remotive / We Work Remotely)
 ```
 
 Every job that survives the hard filters gets scored against the base resume. Only jobs scoring
-7 or higher (with USD/EUR or unstated pay) continue — the rest are remembered as "seen" so they're
+7 or higher whose pay is in an allowed currency and at least $30k/yr (or unstated, with an employer paying from outside India) continue — the rest are remembered as "seen" so they're
 never processed twice, and never touch the Sheet.
 
 ## Setup
@@ -213,6 +213,18 @@ filling forms yourself with autofill, and not implemented here.
   experience, employers, tools, metrics, or years. Missing skills are listed in the Sheet, not added.
 - Free tiers set the pace: ≤ $0.16/day of Apify credit and ~50 free LLM requests/day.
 - A human always clicks the final "apply" — nothing here submits an application on its own.
+
+## Data Sources & Credits
+
+Job data comes from these free sources; every job keeps its link to the original posting.
+
+- [Himalayas](https://himalayas.app) — remote jobs API (data provided by Himalayas)
+- [ROLIVA](https://rolivajobs.com) — "Remote jobs open to applicants in India" list, CC-BY-4.0; each job is
+  re-checked on the employer's own Ashby / Greenhouse / Lever job board
+- [We Work Remotely](https://weworkremotely.com), [Remote OK](https://remoteok.com), [Remotive](https://remotive.com) — RSS / public APIs
+- [Python.org Jobs](https://www.python.org/jobs/) — RSS feed
+- [Hacker News "Who is hiring?"](https://news.ycombinator.com) — via the [Algolia HN API](https://hn.algolia.com/api)
+- LinkedIn public job search — via an [Apify](https://apify.com) actor (free tier)
 
 ## Privacy
 

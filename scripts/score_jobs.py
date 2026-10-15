@@ -19,12 +19,13 @@ from pathlib import Path
 
 from common import base_resume_text, load_config, read_json, run_dir, setup_logging, today, write_json
 from llm import DailyLimitReached, LLMError, chat_json
+from pay import parse_salary, pay_problem
 from resume_model import parse
 
 log = logging.getLogger("score")
 
 ROLE_CATEGORIES = ["AI/GenAI", "ML", "Data Analyst", "Data Annotation", "Python Developer", "Other"]
-CURRENCIES = ["USD", "EUR", "GBP", "INR", "other", "unknown"]
+CURRENCIES = ["USD", "EUR", "GBP", "CHF", "CAD", "AUD", "SGD", "NZD", "INR", "other", "unknown"]
 
 SYSTEM = f"""You are a strict technical recruiter screening remote jobs for one candidate.
 Compare the job to the candidate's resume and return JSON with exactly these keys:
@@ -37,14 +38,31 @@ Compare the job to the candidate's resume and return JSON with exactly these key
   "no" if restricted to other countries/regions or requires work authorization elsewhere, "unclear" otherwise
 - "pay_currency": one of {CURRENCIES}. If pay isn't stated, infer only when obvious
   (an India-based company hiring in India -> "INR"); otherwise "unknown"
+- "salary_text": the pay exactly as the posting states it (e.g. "$80k-$100k per year"), or null if not stated
+- "pays_from_india": "yes" if the hire would be on an Indian payroll — an Indian company, or a foreign
+  company's India office/entity hiring for an India-based role; "no" if the employer pays from outside India
+  (e.g. a foreign company hiring remotely worldwide/across countries, or as a contractor paid in USD/EUR);
+  "unclear" if you cannot tell
 - "role_category": one of {ROLE_CATEGORIES}
 - "reason": one sentence explaining the score
 Score 8-10 only when most core requirements are matched. Do not reward skills the resume lacks."""
 
 
-def keyword_rank(job: dict, terms: list[str]) -> int:
+WORLDWIDE = re.compile(r"worldwide|anywhere|global|international", re.I)
+
+
+def keyword_rank(job: dict, terms: list[str], pay_cfg: dict | None = None) -> int:
+    """Picks which jobs get one of the ~25 daily LLM calls: skill overlap, plus a boost for jobs most likely
+    to clear the pay rules (stated pay in an allowed currency, or open worldwide = paid from abroad)."""
     text = f"{job['title']} {job['description']}".lower()
-    return sum(1 for t in terms if re.search(rf"(?<![a-z0-9]){re.escape(t)}(?![a-z0-9])", text))
+    rank = sum(1 for t in terms if re.search(rf"(?<![a-z0-9]){re.escape(t)}(?![a-z0-9])", text))
+    if pay_cfg:
+        cur = parse_salary(job.get("salary"), pay_cfg.get("usd_per_unit")).currency
+        if cur in pay_cfg["currencies"]:
+            rank += 4
+        if WORLDWIDE.search(job.get("location", "")):
+            rank += 4
+    return rank
 
 
 def resume_terms(base_md: str) -> list[str]:
@@ -54,16 +72,40 @@ def resume_terms(base_md: str) -> list[str]:
     return sorted(terms)
 
 
-def apply_rules(result: dict, cfg: dict) -> dict:
+def pay_verdict(result: dict, salary: str, pay_cfg: dict) -> str | None:
+    """None = pay acceptable under the user's rules, else the reason. Stated pay is parsed in code
+    (job field first, then the model's salary_text) so the currency and floor never rest on the model."""
+    salary_text = result.get("salary_text")
+    stated = salary or (salary_text if isinstance(salary_text, str) else (str(salary_text) if salary_text else ""))
+    parsed = parse_salary(stated, pay_cfg.get("usd_per_unit"))
+    if parsed.currency:
+        result["pay_currency"] = parsed.currency  # code beats the model's guess
+    problem = pay_problem(stated, pay_cfg)
+    if problem:
+        return problem
+    if parsed.currency:  # stated in an allowed currency, at or above the floor (else pay_problem fired)
+        return None
+    # No currency stated anywhere. A model-*guessed* USD/EUR is not evidence of foreign pay; only the
+    # employer test counts. A guessed INR is evidence of an Indian payroll.
+    if result.get("pay_currency") == "INR":
+        return "pay_currency:INR (inferred)"
+    policy = pay_cfg.get("unknown_pay", "employer_abroad_only")
+    if policy == "keep" or (policy == "employer_abroad_only" and result.get("pays_from_india") == "no"):
+        return None
+    return f"pay_unstated:pays_from_india={result.get('pays_from_india')}"
+
+
+def apply_rules(result: dict, cfg: dict, salary: str = "") -> dict:
     score = int(result.get("score") or 0)
     if result.get("seniority_fit") is False or result.get("india_eligible") == "no":
         score = min(score, 5)
-    cur = result.get("pay_currency") or "unknown"
-    currency_ok = cur in cfg["allowed_currencies"] or (cur == "unknown" and cfg["allow_unknown_currency"])
     result["score"] = score
-    result["qualified"] = score >= cfg["min_fit_score"] and currency_ok
-    if score >= cfg["min_fit_score"] and not currency_ok:
-        result["disqualified_reason"] = f"pay_currency={cur}"
+    problem = pay_verdict(result, salary, cfg["pay"])
+    result["qualified"] = score >= cfg["min_fit_score"] and problem is None
+    if problem:
+        result["pay_problem"] = problem
+    if score >= cfg["min_fit_score"] and problem:
+        result["disqualified_reason"] = problem
     return result
 
 
@@ -104,13 +146,13 @@ def score_job(job: dict, base_md: str, cfg: dict) -> dict:
     raw = chat_json(SYSTEM, user, max_tokens=1500, model_env="OPENROUTER_SCORING_MODEL")
     if raw.get("role_category") not in ROLE_CATEGORIES:
         raw["role_category"] = "Other"
-    return apply_rules(raw, cfg)
+    return apply_rules(raw, cfg, job.get("salary") or "")
 
 
 def score_jobs(jobs: list[dict], cfg: dict) -> dict:
     base_md = base_resume_text()
     terms = resume_terms(base_md)
-    ranked = sorted(jobs, key=lambda j: keyword_rank(j, terms), reverse=True)
+    ranked = sorted(jobs, key=lambda j: keyword_rank(j, terms, cfg["pay"]), reverse=True)
     limit = cfg["llm"]["max_jobs_to_score"]
     to_score, skipped = ranked[:limit], ranked[limit:]
     if skipped:
