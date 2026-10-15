@@ -42,7 +42,7 @@ image = (
 )
 volume = modal.Volume.from_name("job-apply-agent-data", create_if_missing=True)
 common = dict(image=image, secrets=[modal.Secret.from_name("job-apply-agent")],
-              volumes={f"{APP_DIR}/output": volume}, timeout=60 * 60)
+              volumes={f"{APP_DIR}/output": volume}, timeout=2 * 60 * 60)  # 25 scoring + 6 tailoring calls ≈ 40 min; headroom for free-model backoff
 
 
 def _bootstrap():

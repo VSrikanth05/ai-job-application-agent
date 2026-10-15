@@ -44,6 +44,7 @@ pay:
 
 hard_filters:
   max_years_required: 2           # reject if the posting requires 3+ years
+  max_posting_age_days: 15        # user's rule: only jobs posted in the last 15 days; no known posting date = rejected
   senior_title_words: [senior, sr, lead, staff, principal, manager, head, director, architect, vp, chief]
 
 # OpenRouter free models allow ~50 requests/day, so LLM work is capped per run:
@@ -149,6 +150,7 @@ sources:
   pythonorg:
     enabled: true
     kind: free
+    max_age_days: 15                  # posting date read from each job page (the RSS has none)
     feed: https://www.python.org/jobs/feed/rss/
 
   # Hacker News "Ask HN: Who is hiring?" monthly thread (free Algolia API). Only posts whose first line says
@@ -156,4 +158,4 @@ sources:
   hn_whoishiring:
     enabled: true
     kind: free
-    max_age_days: 35
+    max_age_days: 15                  # post date; the thread is monthly but only the last 15 days count

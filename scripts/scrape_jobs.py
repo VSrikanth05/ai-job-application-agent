@@ -29,7 +29,7 @@ from urllib.parse import urlencode
 import feedparser
 import requests
 
-from common import ROOT, job_keys, load_config, run_dir, setup_logging, write_json
+from common import ROOT, job_keys, load_config, parse_dt, run_dir, setup_logging, write_json
 
 log = logging.getLogger("scrape")
 UA = {"User-Agent": "Mozilla/5.0 (job-apply-agent; personal job search)"}
@@ -60,18 +60,7 @@ def title_matches(title: str, patterns: list[re.Pattern]) -> bool:
     return any(p.search(title) for p in patterns)
 
 
-def _parse_dt(value) -> datetime | None:
-    """ISO strings ('2026-10-14', '...Z', with offset) or epoch seconds/milliseconds → aware datetime."""
-    if value in (None, ""):
-        return None
-    try:
-        if isinstance(value, (int, float)) or str(value).isdigit():
-            v = float(value)
-            return datetime.fromtimestamp(v / 1000 if v > 1e11 else v, timezone.utc)
-        dt = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
-        return dt if dt.tzinfo else dt.replace(tzinfo=timezone.utc)
-    except (ValueError, OSError, OverflowError):
-        return None
+_parse_dt = parse_dt  # shared with filter_jobs (common.parse_dt)
 
 
 def fresh(dt: datetime | None, max_age_days: int) -> bool:
@@ -138,10 +127,13 @@ def scrape_weworkremotely(cfg: dict, patterns) -> list[dict]:
             posted = parsedate_to_datetime(e["published"]) if e.get("published") else None
             if not fresh(posted, cfg["max_age_days"]):
                 continue
+            # <region> often says "Anywhere in the World" while <country> limits the job to a few countries
+            # (GeoLocked) — the country list is the real restriction when present.
+            where = (e.get("country") or "").strip() or e.get("region") or "unspecified"
             out.append(job(
                 title=title, company=company, link=e.get("link"),
                 description=strip_html(e.get("summary")),
-                location=f"Remote ({e.get('region') or 'unspecified'})",
+                location=f"Remote ({where})",
                 employment_type=e.get("type") or "",
                 posted_date=posted.isoformat() if posted else "", source="weworkremotely",
             ))
@@ -336,18 +328,40 @@ def split_title_company(text: str) -> tuple[str, str]:
     return title, company
 
 
+def _pythonorg_posted(link: str) -> str:
+    """The RSS has no dates; each job page has <time datetime="2026-10-14T20:52:19+00:00">."""
+    try:
+        m = re.search(r'<time[^>]*datetime="([^"]+)"', requests.get(link, headers=UA, timeout=30).text)
+        return m.group(1) if m else ""
+    except requests.RequestException:
+        return ""
+
+
 def scrape_pythonorg(cfg: dict, patterns) -> list[dict]:
     resp = requests.get(cfg["feed"], headers=UA, timeout=60)
     resp.raise_for_status()
-    out = []
+    out, tried, undated = [], 0, 0
     for e in feedparser.parse(resp.content).entries:
         title, company = split_title_company(e.get("title") or "")
         if not title_matches(title, patterns):
             continue
+        tried += 1
+        posted = _pythonorg_posted(e.get("link") or "")
+        if not posted:
+            # Page didn't load / no date: skip WITHOUT emitting, so tomorrow's run retries it (an emitted
+            # undated job would be rejected and remembered as seen for 60 days).
+            undated += 1
+            continue
+        if not fresh(_parse_dt(posted), cfg["max_age_days"]):
+            continue
         text = strip_html(e.get("summary"))
         location, _, desc = text.partition("\n")
         out.append(job(title=title, company=company, link=e.get("link"), description=desc.strip() or text,
-                       location=location.strip(), source="pythonorg"))
+                       location=location.strip(), posted_date=posted, source="pythonorg"))
+    if undated:
+        log.warning("pythonorg: %d of %d job pages gave no posting date (skipped, retried next run)", undated, tried)
+    if tried and undated == tried:
+        raise RuntimeError(f"python.org: all {tried} job pages failed to load or had no posting date")
     return out
 
 
@@ -457,12 +471,10 @@ def normalize_linkedin(it: dict) -> dict:
     loc = it.get("location") or ""
     if isinstance(loc, dict):
         loc = loc.get("defaultLocalizedName") or loc.get("abbreviatedLocalizedName") or ""
-    # "India (Remote)" — filter_jobs reads remote/on-site/hybrid from the location text. The public actor
-    # returns no workplace field, but every search URL carries LinkedIn's Remote filter (f_WT=2), so those
-    # results are remote by LinkedIn's own tagging (the description is still checked for hybrid wording).
+    # "India (Remote)" — filter_jobs reads remote/on-site/hybrid from the location text. Only a real
+    # workplace field counts: LinkedIn's logged-out search IGNORES the f_WT=2 remote filter in our URLs
+    # (same results for remote and on-site), so the public actor's jobs must prove remote in their own text.
     workplace = ", ".join(w.get("localizedName", "") for w in it.get("jobWorkplaceTypes") or [] if isinstance(w, dict))
-    if not workplace and re.search(r"[?&]f_WT=2(?:&|$|%2C|,)", it.get("inputUrl") or ""):
-        workplace = "Remote"
     salary = it.get("salary") or ""
     if isinstance(salary, dict):
         salary = salary.get("formattedBaseSalary") or ""

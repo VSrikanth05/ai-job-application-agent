@@ -13,10 +13,11 @@ import logging
 import re
 import sys
 from collections import Counter
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 
-from common import STATE_DIR, job_keys, legacy_pair_key, load_config, read_json, run_dir, setup_logging, today, write_json
+from common import (STATE_DIR, job_keys, legacy_pair_key, load_config, parse_dt, read_json, run_dir, setup_logging,
+                    today, write_json)
 from pay import parse_salary, pay_problem
 
 log = logging.getLogger("filter")
@@ -54,6 +55,27 @@ HYBRID_DESC = re.compile(r"\b(?:work(?:place|ing)?|work ?(?:mode|model|type|setu
                          r"\b\d\s*days?\s+(?:in|at|from)\s+(?:the |our )?(?:[A-Z][a-z]+ )?office\b|"
                          r"\b(?:on-?site|in[- ]office) (?:presence|attendance|work) (?:is )?(?:required|expected|mandatory)\b|"
                          r"\bmust (?:be able to )?(?:commute|come in(?:to)? (?:the|our) office|work from (?:the|our) office)\b", re.I)
+# Extra arrangement sentences: "This is a hybrid role", "This is an in-office role", "Opportunity Type: Office".
+OFFICE_DESC = re.compile(r"\b(?:this|it) is an? (?:hybrid|in[- ]office|on-?site|office[- ]based|work[- ]from[- ]office) "
+                         r"(?:role|position|job|opportunity)\b|"
+                         r"\b(?:opportunity|work(?:place)?|location|job) type\s*[:\-–]\s*(?:office|hybrid|on-?site|in[- ]office)\b|"
+                         r"\bwork(?:ing)? from (?:the |our )?office\b|\bwfo\b", re.I)
+# A role-level statement that the job IS remote — needed for jobs whose title/location don't say so (the
+# public LinkedIn actor has no workplace field). "We offer remote flexibility" is deliberately not enough.
+REMOTE_STATEMENT = re.compile(
+    r"\b(?:fully|100\s?%|completely|permanently)[- ]remote\b|\bremote[- ](?:first|only)\b|"
+    r"\b(?:this|the) (?:role|position|job|opportunity) is (?:a )?(?:fully )?remote\b|"
+    r"\b(?:this|it) is an? (?:fully )?remote (?:role|position|job|opportunity)\b|"
+    r"\b(?:location|work location|job location|opportunity type|work(?:place)? (?:type|mode|model|arrangement|setup)|"
+    r"job type|employment mode|mode of work)\s*[:\-–]\s*(?:[\w ]{0,20}[,/(-]\s*)?(?:fully )?remote\b|"
+    r"\bremote\s*[-–,(/]\s*(?:india|anywhere|worldwide|global|apac)\b|\b(?:india|anywhere|worldwide)\s*[-–,(/]\s*remote\b|"
+    r"\b(?:work|working) (?:from home|remotely|fully remotely)\b|\bwork[- ]from[- ]home\b|\bwfh\b|"
+    r"\bremote (?:role|position|job|opportunity)\b", re.I)
+# Seniority stated in the description or as a level suffix in the title.
+SENIOR_DESC = re.compile(r"\bstaff ?/ ?senior\b|\bsenior ?/ ?staff\b|\bmid(?:dle)?\+? to senior\b|"
+                         r"\bsenior[- ]level (?:role|position|engineer|candidate)\b|"
+                         r"\bwe(?:'re| are) (?:looking|hiring) for an? (?:staff|senior|lead|principal)\b", re.I)
+SENIOR_LEVEL_TITLE = re.compile(r"(?:\b|_)(?:III|IV|VI?)\b")
 # Only role-level statements override the above ("remote-first company" doesn't make a hybrid role remote).
 FULLY_REMOTE = re.compile(r"\bfully[- ]remote\b|\b100\s?% remote\b|\bremote[- ]only\b|\bfully distributed\b|"
                           r"\bwork from anywhere\b", re.I)
@@ -79,15 +101,19 @@ ONSITE = re.compile(r"\bon[- ]?site\b|\bin[- ]office\b|\bwork from office\b|\bhy
 # Remote offered as an alternative ("Remote (Worldwide) or On-site London") is still a remote job.
 REMOTE_OPTION = re.compile(r"\bremote\b[^|;]{0,30}\b(?:or|/|&)\s*(?:on-?site|hybrid|in[- ]office)\b|"
                            r"\b(?:on-?site|hybrid|in[- ]office)\b[^|;]{0,30}\b(?:or|/|&)\s*remote\b", re.I)
-YEARS = re.compile(r"(\d{1,2})\s*(?:\+|plus)?\s*(?:-|–|to)?\s*(?:\d{1,2})?\s*\+?\s*(?:years?|yrs?)\b"
-                   r"(?:[^.\n]{0,60}?\bexperience\b)?", re.I)
-INR = re.compile(r"₹|\binr\b|\blpa\b|\blakhs?\b|\blacs?\b|\bcrore\b", re.I)
+# "0.5–3 years" starts at 0 (not 5): never start matching mid-number, and swallow the decimal part.
+YEARS = re.compile(r"(?<![\d.])(\d{1,2})(?:\.\d+)?\s*(?:\+|plus)?\s*(?:-|–|to)?\s*(?:\d{1,2}(?:\.\d+)?)?\s*\+?\s*"
+                   r"(?:years?|yrs?)\b(?:[^.\n]{0,60}?\bexperience\b)?", re.I)
+UP_TO = re.compile(r"(?:up ?to|upto|max(?:imum)?(?: of)?|less than|under|below|within|no more than)\s*$", re.I)
+INR = re.compile(r"₹|\binr\b|\blpa\b|\blakhs?\b|\blacs?\b|\bcrores?\b|\brupees?\b", re.I)
 
 
 def required_years(text: str) -> int | None:
     """Largest 'N years ... experience' minimum in the text (ignores >15: company age etc.)."""
     found = []
     for m in YEARS.finditer(text):
+        if UP_TO.search(text[max(0, m.start() - 20): m.start()]):
+            continue  # "up to 3 years" is a ceiling, not a requirement
         window = text[max(0, m.start() - 40): m.end() + 60].lower()
         if re.search(r"experience|\bexp\b", window):
             n = int(m.group(1))
@@ -118,13 +144,24 @@ def reject_reason(job: dict, cfg: dict) -> str | None:
     hf = cfg["hard_filters"]
     head = f"{title} {loc}"
 
+    # posted within the last max_posting_age_days (user's rule: 15). Every source supplies a posting date;
+    # a job whose date is missing/unreadable can't be shown to be recent, so it is rejected too.
+    max_age = hf.get("max_posting_age_days")
+    if max_age:
+        posted = parse_dt(job.get("posted_date"))
+        if posted is None:
+            return "no_post_date"
+        if posted < datetime.now(timezone.utc) - timedelta(days=max_age, hours=12):  # +12h: date-only values
+            return "too_old"
+
     # not remote (strict): remote-only board, or "remote" in the title/location itself — a description that
     # merely mentions "remote" somewhere is not enough. Any hybrid/on-site wording in title/location rejects,
     # India included; hybrid/office-days in the description reject unless it also says fully remote.
-    is_remote = job["source"] in REMOTE_ONLY_BOARDS or re.search(r"\bremote\b", head, re.I)
+    is_remote = (job["source"] in REMOTE_ONLY_BOARDS or re.search(r"\bremote\b", head, re.I)
+                 or REMOTE_STATEMENT.search(desc))
     if not is_remote or (ONSITE.search(head) and not REMOTE_OPTION.search(head)):
         return "not_remote"
-    if HYBRID_DESC.search(desc) and not FULLY_REMOTE.search(f"{head} {desc}"):
+    if (HYBRID_DESC.search(desc) or OFFICE_DESC.search(desc)) and not FULLY_REMOTE.search(f"{head} {desc}"):
         return "not_remote"
 
     # not full-time: any contract/part-time/intern marker counts, even next to "full-time" ("Full-time
@@ -136,7 +173,7 @@ def reject_reason(job: dict, cfg: dict) -> str | None:
 
     # too senior
     words = "|".join(map(re.escape, hf["senior_title_words"]))
-    if re.search(rf"\b(?:{words})\b\.?", title, re.I):
+    if re.search(rf"\b(?:{words})\b\.?", title, re.I) or SENIOR_LEVEL_TITLE.search(title) or SENIOR_DESC.search(desc):
         return "too_senior"
     if re.search(r"mid-senior|director|executive", job.get("seniority", ""), re.I):
         return "too_senior"
@@ -198,7 +235,8 @@ def filter_jobs(jobs: list[dict], cfg: dict, extra_seen_links: set[str] | None =
             rejected.append({**j, "status": f"rejected:{reason}"})
         else:
             kept.append(j)
-    mark_seen(rejected)
+    # A missing posting date can be a transient fetch problem: don't remember those, so they get retried.
+    mark_seen([r for r in rejected if r["status"] != "rejected:no_post_date"])
     for rule, n in counts.most_common():
         log.info("  %-16s removed %d", rule, n)
     log.info("hard filters: %d → %d", len(jobs), len(kept))

@@ -24,7 +24,7 @@ CODES = {"USD", "EUR", "GBP", "CHF", "CAD", "AUD", "SGD", "NZD", "INR", "JPY", "
          "HUF", "SEK", "NOK", "DKK", "BRL", "MXN", "ARS", "COP", "ZAR", "NGN", "PKR", "BDT", "LKR", "PHP",
          "IDR", "VND", "MYR", "THB", "AED", "SAR", "TRY", "UAH", "RUB", "KES", "EGP", "HKD", "TWD", "KRW", "ILS"}
 CODE_RE = re.compile(r"(?<![A-Za-z])(" + "|".join(sorted(CODES)) + r")(?![A-Za-z])")
-INR_WORDS = re.compile(r"₹|\blpa\b|\blakhs?\b|\blacs?\b|\bcrores?\b|\brs\.?\s?\d", re.I)
+INR_WORDS = re.compile(r"₹|\blpa\b|\blakhs?\b|\blacs?\b|\bcrores?\b|\brs\.?\s?\d|\brupees?\b", re.I)
 NUM = re.compile(r"(\d+(?:[.,]\d+)*)\s*(k|m|l|lakhs?|lacs?|lpa|cr|crores?)?(?![a-z])", re.I)
 # A number followed by one of these is not money ("40 hours/week", "3+ years", "0.25%", "500 employees").
 NOT_MONEY = re.compile(r"^\s*(?:\+\s*)?(?:%|percent|hours?\b|hrs?\b|h/w|days?\b|weeks?\b|wks?\b|years?\b|yrs?\b|"

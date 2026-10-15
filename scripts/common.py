@@ -85,6 +85,21 @@ def norm_company(s: str) -> str:
     return COMPANY_SUFFIX.sub("", n) or n
 
 
+def parse_dt(value) -> datetime | None:
+    """ISO strings ('2026-10-14', '...Z', '2026-10-12 11:27:21', with offset) or epoch seconds/ms →
+    timezone-aware datetime (naive values are taken as UTC). None if missing/unparseable."""
+    if value in (None, ""):
+        return None
+    try:
+        if isinstance(value, (int, float)) or str(value).strip().isdigit():
+            v = float(value)
+            return datetime.fromtimestamp(v / 1000 if v > 1e11 else v, timezone.utc)
+        dt = datetime.fromisoformat(str(value).strip().replace("Z", "+00:00"))
+        return dt if dt.tzinfo else dt.replace(tzinfo=timezone.utc)
+    except (ValueError, OSError, OverflowError):
+        return None
+
+
 def legacy_pair_key(job: dict) -> str:
     """company|title key as written before norm_company existed — still checked so the seen-jobs
     history recorded earlier keeps matching."""

@@ -43,6 +43,8 @@ Compare the job to the candidate's resume and return JSON with exactly these key
   company's India office/entity hiring for an India-based role; "no" if the employer pays from outside India
   (e.g. a foreign company hiring remotely worldwide/across countries, or as a contractor paid in USD/EUR);
   "unclear" if you cannot tell
+- "work_arrangement": "remote" if the job can be done fully remotely, "hybrid" if it requires some office
+  days, "onsite" if it is office-based, "unclear" if the posting doesn't say
 - "role_category": one of {ROLE_CATEGORIES}
 - "reason": one sentence explaining the score
 Score 8-10 only when most core requirements are matched. Do not reward skills the resume lacks."""
@@ -96,10 +98,21 @@ def pay_verdict(result: dict, salary: str, pay_cfg: dict) -> str | None:
 
 
 def apply_rules(result: dict, cfg: dict, salary: str = "") -> dict:
-    score = int(result.get("score") or 0)
-    if result.get("seniority_fit") is False or result.get("india_eligible") == "no":
+    try:
+        score = int(float(result.get("score") or 0))
+    except (TypeError, ValueError):
+        score = 0
+    ry = result.get("required_years")
+    too_senior = isinstance(ry, (int, float)) and not isinstance(ry, bool) and ry > cfg["hard_filters"]["max_years_required"]
+    if result.get("seniority_fit") is False or result.get("india_eligible") == "no" or too_senior:
         score = min(score, 5)
     result["score"] = score
+    # Backstop for the strict-remote rule (the filter can only read wording): the model's reading of the
+    # work arrangement disqualifies hybrid/on-site jobs outright.
+    if str(result.get("work_arrangement") or "").lower() in ("hybrid", "onsite", "on-site"):
+        result["qualified"] = False
+        result["disqualified_reason"] = f"work_arrangement={result['work_arrangement']}"
+        return result
     problem = pay_verdict(result, salary, cfg["pay"])
     result["qualified"] = score >= cfg["min_fit_score"] and problem is None
     if problem:

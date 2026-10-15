@@ -19,7 +19,7 @@ Modal's free monthly credit.
 
 ```
 Scrape (Apify LinkedIn + Himalayas / ROLIVA via company ATS APIs / We Work Remotely / Python.org / HN Who is hiring / RemoteOK / Remotive)
-    -> Hard filters (rule-based: truly remote, full-time, <=2 yrs, open to India, pay currency + $30k floor)
+    -> Hard filters (rule-based: posted in the last 15 days, truly remote, full-time, <=2 yrs, open to India, pay currency + $30k floor)
         -> Score + Filter (OpenRouter, 7+/10 cutoff, ATS keyword match)
             -> Tailor Resume (Skill + validation Hook; skills only from a proven skills inventory)
                 -> Render PDF (Google Docs template via gws CLI, one page)
