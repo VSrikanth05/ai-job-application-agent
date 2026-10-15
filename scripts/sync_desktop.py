@@ -33,7 +33,7 @@ MODAL = ROOT / ".venv" / "Scripts" / "modal.exe"
 VOLUME = "job-apply-agent-data"
 LOGIN_FILE = STATE_DIR / "google_login.json"  # written by push_modal_secrets.py after each re-login
 LOGIN_DAYS, WARN_AFTER_DAYS = 7, 6
-RELOGIN_HINT = "Ask Claude to 're-login Google' (one browser tab — tick the Drive box)."
+RELOGIN_HINT = "Ask Claude to 're-login Google' (one browser tab — tick both boxes: Drive + send email)."
 
 
 def _letter(name: str) -> str:

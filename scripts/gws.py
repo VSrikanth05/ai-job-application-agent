@@ -130,5 +130,6 @@ def check_auth() -> None:
         gws("drive", "files", "list", params={"pageSize": 1, "fields": "files(id)"}, retries=1)
     except GwsError as e:
         raise GwsError("auth", f"Google login not working ({e}) — re-login: "
-                               "tools/gws/gws.exe auth login --scopes https://www.googleapis.com/auth/drive.file "
-                               "(tick the Drive box), then python scripts/push_modal_secrets.py") from e
+                               "tools/gws/gws.exe auth login --scopes https://www.googleapis.com/auth/drive.file,"
+                               "https://www.googleapis.com/auth/gmail.send (tick both boxes), "
+                               "then python scripts/push_modal_secrets.py") from e

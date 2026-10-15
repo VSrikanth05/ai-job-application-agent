@@ -9,8 +9,9 @@ and the exact run/deploy commands are all below — nothing else to figure out.
 An AI agent that finds **entry-level, remote, full-time AI / ML / Data jobs** that can hire from
 India and pay well in USD/EUR (or GBP/CHF/CAD/AUD/SGD/NZD, at least $30k/yr), scores each one against my resume, tailors a **one-page resume** for every
 job that's a strong fit (reorder and reword only — never invented), researches the company, and logs
-it all to a Google Sheet. It runs on its own on **Modal every morning at 7:00 AM IST**; when I log in,
-the new PDFs are already on my Desktop.
+it all to a Google Sheet. It runs on its own on **Modal every morning at 7:00 AM IST**, then emails me
+the tracker (today's new jobs + everything I haven't applied to yet); when I log in, the new PDFs are
+already on my Desktop.
 
 The whole stack is free: Apify free tier, OpenRouter `:free` models, the Google Workspace CLI, and
 Modal's free monthly credit.
@@ -24,7 +25,8 @@ Scrape (Apify LinkedIn + Himalayas / ROLIVA via company ATS APIs / We Work Remot
             -> Tailor Resume (Skill + validation Hook; skills only from a proven skills inventory)
                 -> Render PDF (Google Docs template via gws CLI, one page)
                     -> Company Research (OpenRouter)
-                        -> Drive + Google Sheet (gws CLI) -> Desktop sync + alerts (local)
+                        -> Drive + Google Sheet (gws CLI) -> daily tracker email (Gmail)
+                            -> Desktop sync + alerts (local)
 ```
 
 Every job that survives the hard filters gets scored against the base resume. Only jobs scoring
@@ -133,8 +135,18 @@ Runs daily at **7:00 AM Asia/Kolkata**. Re-run `push_modal_secrets.py` after a G
 ```bash
 modal run modal_app.py --connectivity   # job boards, Apify dry run, one OpenRouter call
 modal run modal_app.py --smoke          # Google login, template -> PDF, Drive upload, Sheet row
+modal run modal_app.py --email          # sends today's tracker email (REPORT_EMAIL_TO)
 modal run modal_app.py --force-fail     # proves the failure alert path
 ```
+
+## Daily Tracker Email
+
+Right after each 07:00 run, `scripts/email_report.py` reads the Sheet and sends an email from my own
+Gmail (via `gws`, send-only `gmail.send` scope) to `REPORT_EMAIL_TO`: subject with the day's new
+companies, then today's funnel, a **New today** table, a **Still to apply** table (every job whose Status
+is still "Not Applied", best fit first) with job + resume links, and a link to the full tracker. If the
+run fails, the same email says what broke. It goes out from the cloud, so it arrives with the laptop off.
+Preview: `python scripts/email_report.py --dry-run`.
 
 ## Desktop Sync + Failure Alerts
 

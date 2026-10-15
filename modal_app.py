@@ -3,6 +3,7 @@
     .venv/Scripts/modal deploy modal_app.py            # (re)deploy the schedule
     .venv/Scripts/modal run modal_app.py --smoke       # cloud check: Google login, template, Drive, Sheet (no Apify/LLM)
     .venv/Scripts/modal run modal_app.py --force-fail  # test the "WHAT BROKE" ntfy alert
+    .venv/Scripts/modal run modal_app.py --email       # send today's tracker email from the cloud
     .venv/Scripts/modal run modal_app.py               # one full run now (spends Apify credit + LLM calls)
 
 Secrets: Modal secret "job-apply-agent", written by scripts/push_modal_secrets.py from .env and the
@@ -57,22 +58,26 @@ def daily_run(force_fail: bool = False):
     if force_fail:
         os.environ["JOB_AGENT_FORCE_FAIL"] = "1"
     _bootstrap()
+    import email_report
     import notify
     import run_pipeline
     from common import STATE_DIR, now_iso, today, write_json
 
     # The PC can't receive pop-ups from the cloud, so the outcome is written to the volume and
-    # scripts/sync_desktop.py reads it at logon / 08:00 and shows the Windows notification.
+    # scripts/sync_desktop.py reads it at logon / 08:00 and shows the Windows notification. The daily
+    # email (tracker report, or the failure) goes out from here, so it arrives even with the laptop off.
     status = {"date": today(), "started_at": now_iso(), "status": "failed", "error": "run did not finish"}
     try:
         summary = run_pipeline.run()
         notify.report(summary)
         status.update(status="ok", error="", funnel=summary["funnel"], warnings=summary["warnings"][:5],
                       flagged=len(summary["flagged"]))
+        status["emailed"] = email_report.send_report(summary)
         return summary["funnel"]
     except Exception as e:
         status["error"] = f"{type(e).__name__}: {e}"[:600]
         notify.failure_alert(e)
+        status["emailed"] = email_report.send_report(error=e)  # never raises
         raise
     finally:
         status["finished_at"] = now_iso()
@@ -123,9 +128,20 @@ def connectivity_test():
             "apify_worst_case_usd": res["apify_usd"], "openrouter": llm_status}
 
 
+@app.function(**common)
+def email_test():
+    """Sends today's tracker email from the cloud (Gmail scope + REPORT_EMAIL_TO), no Apify/LLM spend."""
+    _bootstrap()
+    import email_report
+
+    return {"emailed": email_report.send_report(), "to": email_report.recipient()}
+
+
 @app.local_entrypoint()
-def main(smoke: bool = False, force_fail: bool = False, connectivity: bool = False):
-    if connectivity:
+def main(smoke: bool = False, force_fail: bool = False, connectivity: bool = False, email: bool = False):
+    if email:
+        print(email_test.remote())
+    elif connectivity:
         print(connectivity_test.remote())
     elif smoke:
         print(smoke_test.remote())

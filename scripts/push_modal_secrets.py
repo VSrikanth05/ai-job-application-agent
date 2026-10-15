@@ -2,7 +2,7 @@
 
 Run after a Google re-login (records the login time for the expiry warning), or with
 --keep-login-date after only changing .env keys:
-    tools/gws/gws.exe auth login --scopes https://www.googleapis.com/auth/drive.file   (tick the Drive box)
+    tools/gws/gws.exe auth login --scopes https://www.googleapis.com/auth/drive.file,https://www.googleapis.com/auth/gmail.send   (tick both boxes)
     .venv/Scripts/python scripts/push_modal_secrets.py
 """
 
@@ -24,7 +24,7 @@ MODAL = ROOT / ".venv" / "Scripts" / "modal.exe"
 SECRET_NAME = "job-apply-agent"
 REQUIRED = ["APIFY_API_TOKEN", "OPENROUTER_API_KEY", "GOOGLE_RESUME_TEMPLATE_ID", "GOOGLE_SHEET_ID",
             "GOOGLE_DRIVE_FOLDER_ID"]
-OPTIONAL = ["OPENROUTER_MODEL", "OPENROUTER_SCORING_MODEL", "NTFY_TOPIC", "TELEGRAM_BOT_TOKEN",
+OPTIONAL = ["OPENROUTER_MODEL", "OPENROUTER_SCORING_MODEL", "REPORT_EMAIL_TO", "NTFY_TOPIC", "TELEGRAM_BOT_TOKEN",
             "TELEGRAM_CHAT_ID"]
 # Read by sync_desktop.py to warn a day before Google's 7-day Testing-mode login expiry.
 LOGIN_FILE = ROOT / "output" / "state" / "google_login.json"

@@ -14,17 +14,19 @@ and unzip `gws.exe` into `tools/gws/`.
 ## Current setup (done 2026-10-14)
 
 - Google Cloud project **Job Apply Agent** (an existing project reused — the account is at its
-  25-project quota). Only Drive, Docs and Sheets APIs are enabled.
+  25-project quota). Only Drive, Docs, Sheets and Gmail APIs are enabled.
 - OAuth app is in **Testing** (Publish was blocked without a home page/privacy policy). Test users:
   your Gmail account(s). Google expires Testing logins after
   **7 days** — when the daily run fails with an auth error, re-login:
   ```
-  tools\gws\gws.exe auth login --scopes https://www.googleapis.com/auth/drive.file
+  tools\gws\gws.exe auth login --scopes https://www.googleapis.com/auth/drive.file,https://www.googleapis.com/auth/gmail.send
   ```
-  Open the printed URL, and on the permissions screen **tick the Drive box** (it is unticked by
-  default; without it the login has no Drive access). If calls still fail with "insufficient
+  Open the printed URL, and on the permissions screen **tick both boxes** — Drive and "Send email on
+  your behalf" (they are unticked by default; without them the login has no Drive access / can't send
+  the daily email). If calls still fail with "insufficient
   authentication scopes", delete `%USERPROFILE%\.config\gws\token_cache.json` (stale cached token).
-- Scope is only `drive.file`: the app sees just the files it created (template, Sheet, temp copies).
+- Scopes: `drive.file` (the app sees just the files it created: template, Sheet, temp copies) and
+  `gmail.send` (send-only — it can't read your mail), used for the daily tracker email.
 
 ## 1. Sign in to Google (≈5 min, needs your browser)
 
@@ -70,12 +72,17 @@ the script is safe (it re-applies the Sheet's dropdown/colour formatting). After
 1. `.venv\Scripts\pip install modal` → `.venv\Scripts\modal token new` (browser).
 3. `.venv\Scripts\python scripts\push_modal_secrets.py` — uploads `.env` keys + the gws login as Modal secret `job-apply-agent`. **Re-run after every Google re-login.**
 4. `.venv\Scripts\modal deploy modal_app.py` (redeploy after code/config/resume changes).
-5. Checks: `modal run modal_app.py --connectivity` (boards, Apify dry run, OpenRouter), `modal run modal_app.py --smoke` (then delete the TEST row/folder) and `modal run modal_app.py --force-fail`
+5. Checks: `modal run modal_app.py --connectivity` (boards, Apify dry run, OpenRouter), `modal run modal_app.py --email` (sends today's tracker email), `modal run modal_app.py --smoke` (then delete the TEST row/folder) and `modal run modal_app.py --force-fail`
    (then run `scripts\sync_desktop.py` → failure pop-up; afterwards `modal volume rm job-apply-agent-data state/last_run.json`).
+
+**Daily email:** after every 07:00 run the cloud emails the tracker (new jobs, everything still "Not
+Applied", the funnel — or the error if the run failed) to `REPORT_EMAIL_TO` from your own Gmail. Enable
+the Gmail API once: `gcloud services enable gmail.googleapis.com --project <your project>`. Preview
+without sending: `.venv\Scripts\python scripts\email_report.py --dry-run`.
 
 Alerts are desktop pop-ups shown by the local sync (next section): cloud run failed/missing, Google
 login expiring tomorrow, Google login expired. **Weekly re-login** (Testing mode, accepted):
-`tools\gws\gws.exe auth login --scopes https://www.googleapis.com/auth/drive.file` (tick the Drive box)
+`tools\gws\gws.exe auth login --scopes https://www.googleapis.com/auth/drive.file,https://www.googleapis.com/auth/gmail.send` (tick both boxes)
 → `.venv\Scripts\python scripts\push_modal_secrets.py`.
 
 ## 5. Local Desktop sync
